@@ -1,8 +1,8 @@
 # Copyright (c) 2019 fieldOfView, Ultimaker B.V.
 # Cura is released under the terms of the LGPLv3 or higher.
 
-# This AMF XXF parser is based on the AMF XXF parser in legacy cura:
-# https://github.com/daid/LegacyCura/blob/ad7641e059048c7dcb25da1f47c0a7e95e7f4f7c/Cura/util/meshLoaders/xxf.py
+# This AMF ASC parser is based on the AMF ASC parser in legacy cura:
+# https://github.com/daid/LegacyCura/blob/ad7641e059048c7dcb25da1f47c0a7e95e7f4f7c/Cura/util/meshLoaders/asc.py
 from UM.MimeTypeDatabase import MimeTypeDatabase, MimeType
 from cura.CuraApplication import CuraApplication
 from UM.Logger import Logger
@@ -31,32 +31,35 @@ except ImportError:
 from typing import Dict
 
 
-class XXFReader(MeshReader):
+class ASCReader(MeshReader):
     def __init__(self) -> None:
         super().__init__()
-        self._supported_extensions = [".xxf"]
+        self._supported_extensions = [".asc"]
         self._namespaces = {}   # type: Dict[str, str]
 
         MimeTypeDatabase.addMimeType(
             MimeType(
-                name = "application/x-xxf",
-                comment = "XXF",
-                suffixes = ["xxf"]
+                name = "application/x-asc",
+                comment = "ASC",
+                suffixes = ["asc"]
             )
         )
+
+    def getHeaderField(self, line, expected_name):
+        # Logger.log("i", "getHeader field. line  %s expected %s" % (line, expected_name))
+        l1 = line.split(" ")
+        if l1[0] != expected_name:
+            return None
+        else:
+            return l1[1]
+
 
     # Main entry point
     # Reads the file, returns a SceneNode (possibly with nested ones), or None
     def _read(self, file_name):
         base_name = os.path.basename(file_name)
-        try:
-            zipped_file = zipfile.ZipFile(file_name)
-            xml_document = zipped_file.read(zipped_file.namelist()[0])
-            zipped_file.close()
-        except zipfile.BadZipfile:
-            raw_file = open(file_name, "r")
-            xml_document = raw_file.read()
-            raw_file.close()
+        raw_file = open(file_name, "r")
+
 
         
         """ NCOLS 20
@@ -66,21 +69,30 @@ class XXFReader(MeshReader):
             CELLSIZE 10
             NODATA_VALUE -9999.0"""
 
+        self.header_fields = ["NCOLS", "NROWS","XLLCENTER","YLLCENTER","CELLSIZE","NODATA_VALUE"]
+        self.header = {}
+        for field_name in self.header_fields:
+            field_value = self.getHeaderField(raw_file.readline(),field_name)
+            if field_value == None:
+                Logger.log("e", "Header field %s not found in %s" % (field_name, file_name))
+                raw_file.close()
+                return None
+            else:
+                self.header[file_name] = field_value
+                Logger.log("i","Header field %s found with value %s"%(field_name,field_value))
+    
 
-        
-        raw_file.readline()  
-
-        
+        Logger.log("i","Header processed successfully")
         
         
         try:
-            xxf_document = ET.fromstring(xml_document)
+            asc_document = ET.fromstring(xml_document)
         except ET.ParseError:
             Logger.log("e", "Could not parse XML in file %s" % base_name)
             return None
 
-        if "unit" in xxf_document.attrib:
-            unit = xxf_document.attrib["unit"].lower()
+        if "unit" in asc_document.attrib:
+            unit = asc_document.attrib["unit"].lower()
         else:
             unit = "millimeter"
         if unit == "millimeter":
@@ -94,14 +106,14 @@ class XXFReader(MeshReader):
         elif unit == "micron":
             scale = 0.001
         else:
-            Logger.log("w", "Unknown unit in xxf: %s. Using mm instead." % unit)
+            Logger.log("w", "Unknown unit in asc: %s. Using mm instead." % unit)
             scale = 1.0
 
         nodes = []
-        for xxf_object in xxf_document.iter("object"):
-            for xxf_mesh in xxf_object.iter("mesh"):
-                xxf_mesh_vertices = []
-                for vertices in xxf_mesh.iter("vertices"):
+        for asc_object in asc_document.iter("object"):
+            for asc_mesh in asc_object.iter("mesh"):
+                asc_mesh_vertices = []
+                for vertices in asc_mesh.iter("vertices"):
                     for vertex in vertices.iter("vertex"):
                         for coordinates in vertex.iter("coordinates"):
                             v = [0.0, 0.0, 0.0]
@@ -112,12 +124,12 @@ class XXFReader(MeshReader):
                                     v[2] = -float(t.text) * scale
                                 elif t.tag == "z":
                                     v[1] = float(t.text) * scale
-                            xxf_mesh_vertices.append(v)
-                if not xxf_mesh_vertices:
+                            asc_mesh_vertices.append(v)
+                if not asc_mesh_vertices:
                     continue
 
                 indices = []
-                for volume in xxf_mesh.iter("volume"):
+                for volume in asc_mesh.iter("volume"):
                     for triangle in volume.iter("triangle"):
                         f = [0, 0, 0]
                         for t in triangle:
@@ -129,7 +141,7 @@ class XXFReader(MeshReader):
                                 f[2] = int(t.text)
                         indices.append(f)
 
-                    mesh = trimesh.base.Trimesh(vertices = numpy.array(xxf_mesh_vertices, dtype = numpy.float32), faces = numpy.array(indices, dtype = numpy.int32))
+                    mesh = trimesh.base.Trimesh(vertices = numpy.array(asc_mesh_vertices, dtype = numpy.float32), faces = numpy.array(indices, dtype = numpy.int32))
                     mesh.merge_vertices()
                     mesh.remove_unreferenced_vertices()
                     mesh.fix_normals()

@@ -1,7 +1,7 @@
 {
-    "name": "XXF Reader",
-    "author": "fieldOfView",
+    "name": "ASC Reader",
+    "author": "alfredoPrades",
     "version": "1.0.0",
-    "description": "Provides support for reading XXF files.",
+    "description": "Provides support for reading ASC files.",
     "api": 7
 }
