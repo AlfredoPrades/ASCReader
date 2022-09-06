@@ -1,0 +1,8 @@
+PLUGIN PARA CURA
+
+Lee formato DEM .asc (ESRI elevation map)
+
+lo "cierra" y lo abre en cura
+
+
+basado en el plugin de formato AMF renombrado a XXF

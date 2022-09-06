@@ -1,0 +1,7 @@
+{
+    "name": "XXF Reader",
+    "author": "fieldOfView",
+    "version": "1.0.0",
+    "description": "Provides support for reading XXF files.",
+    "api": 7
+}
