@@ -3,6 +3,8 @@
 
 # This AMF ASC parser is based on the AMF ASC parser in legacy cura:
 # https://github.com/daid/LegacyCura/blob/ad7641e059048c7dcb25da1f47c0a7e95e7f4f7c/Cura/util/meshLoaders/asc.py
+
+from tkinter.tix import INTEGER
 from UM.MimeTypeDatabase import MimeTypeDatabase, MimeType
 from cura.CuraApplication import CuraApplication
 from UM.Logger import Logger
@@ -19,7 +21,6 @@ from UM.Scene.GroupDecorator import GroupDecorator
 import numpy
 import trimesh
 import os.path
-import zipfile
 
 MYPY = False
 try:
@@ -36,7 +37,7 @@ class ASCReader(MeshReader):
         super().__init__()
         self._supported_extensions = [".asc"]
         self._namespaces = {}   # type: Dict[str, str]
-
+        Logger.log("i","DEBUG ASCREADER")
         MimeTypeDatabase.addMimeType(
             MimeType(
                 name = "application/x-asc",
@@ -57,6 +58,7 @@ class ASCReader(MeshReader):
     # Main entry point
     # Reads the file, returns a SceneNode (possibly with nested ones), or None
     def _read(self, file_name):
+        Logger.log("i","DEBUG Read start")
         base_name = os.path.basename(file_name)
         raw_file = open(file_name, "r")
 
@@ -78,83 +80,141 @@ class ASCReader(MeshReader):
                 raw_file.close()
                 return None
             else:
-                self.header[file_name] = field_value
-                Logger.log("i","Header field %s found with value %s"%(field_name,field_value))
+                self.header[field_name] = field_value
+                Logger.log("i","Header field '%s' found with value '%s'"%(field_name,field_value))
     
 
         Logger.log("i","Header processed successfully")
         
+
+        max_elevation = 0
+        min_elevation = 10000000
+        cellsize = int(self.header["CELLSIZE"])
+        nodata = self.header["NODATA_VALUE"]
+        y = 0
+        asc_mesh = []
+        for line in raw_file:
+            x = 0
+            Logger.log("i",line)
+            for elev_point in line.split(' '):
+                vertex = [0.0, 0.0, 0.0]
+                vertex[0] = x * cellsize
+                vertex[1] = y * cellsize
+                if elev_point == nodata:
+                    vertex[2] = 0.0  #O base elevation
+                else:
+                    vertex[2] = float(elev_point)
+                    if vertex[2] > max_elevation: 
+                        max_elevation = vertex[2]
+                    elif vertex[2] < min_elevation:
+                        min_elevation = vertex[2]
+
+
+                Logger.log("i",str(vertex))        
+                asc_mesh.append(vertex)
+                x+=1
+            y+=1
+
+        raw_file.close()
+
+        elevation_range = (max_elevation - min_elevation)  / 5.0 
+        base_z = 0.0
+        if min_elevation > elevation_range:
+            base_z = min_elevation - elevation_range
         
-        try:
-            asc_document = ET.fromstring(xml_document)
-        except ET.ParseError:
-            Logger.log("e", "Could not parse XML in file %s" % base_name)
-            return None
+   
 
-        if "unit" in asc_document.attrib:
-            unit = asc_document.attrib["unit"].lower()
-        else:
-            unit = "millimeter"
-        if unit == "millimeter":
-            scale = 1.0
-        elif unit == "meter":
-            scale = 1000.0
-        elif unit == "inch":
-            scale = 25.4
-        elif unit == "feet":
-            scale = 304.8
-        elif unit == "micron":
-            scale = 0.001
-        else:
-            Logger.log("w", "Unknown unit in asc: %s. Using mm instead." % unit)
-            scale = 1.0
+        elevation_factor = 30
+        ok_cellsize = elevation_factor * cellsize
+        for x in range(0,ncols):
+            vertex = [x * ok_cellsize, 0.0, base_z]
+            asc_mesh.append(vertex)
 
-        nodes = []
-        for asc_object in asc_document.iter("object"):
-            for asc_mesh in asc_object.iter("mesh"):
-                asc_mesh_vertices = []
-                for vertices in asc_mesh.iter("vertices"):
-                    for vertex in vertices.iter("vertex"):
-                        for coordinates in vertex.iter("coordinates"):
-                            v = [0.0, 0.0, 0.0]
-                            for t in coordinates:
-                                if t.tag == "x":
-                                    v[0] = float(t.text) * scale
-                                elif t.tag == "y":
-                                    v[2] = -float(t.text) * scale
-                                elif t.tag == "z":
-                                    v[1] = float(t.text) * scale
-                            asc_mesh_vertices.append(v)
-                if not asc_mesh_vertices:
-                    continue
+        right_x = (ncols -1) * ok_cellsize
+        for y in range(0,nrows):
+            vertex = [right_x, y * ok_cellsize, base_z]
+            asc_mesh.append(vertex)
+            
+        bottom_y = (nrows -1) * ok_cellsize
+        for x in range(0,ncols):
+            vertex= [x * ok_cellsize, bottom_y, base_z]
+            asc_mesh.append(vertex)
 
-                indices = []
-                for volume in asc_mesh.iter("volume"):
-                    for triangle in volume.iter("triangle"):
-                        f = [0, 0, 0]
-                        for t in triangle:
-                            if t.tag == "v1":
-                                f[0] = int(t.text)
-                            elif t.tag == "v2":
-                                f[1] = int(t.text)
-                            elif t.tag == "v3":
-                                f[2] = int(t.text)
-                        indices.append(f)
+        for y in range(0,nrows):
+            vertex= [0 , y * ok_cellsize, base_z]
+            asc_mesh.append(vertex)
 
-                    mesh = trimesh.base.Trimesh(vertices = numpy.array(asc_mesh_vertices, dtype = numpy.float32), faces = numpy.array(indices, dtype = numpy.int32))
-                    mesh.merge_vertices()
-                    mesh.remove_unreferenced_vertices()
-                    mesh.fix_normals()
-                    mesh_data = self._toMeshData(mesh, file_name)
 
-                    new_node = CuraSceneNode()
-                    new_node.setSelectable(True)
-                    new_node.setMeshData(mesh_data)
-                    new_node.setName(base_name if len(nodes) == 0 else "%s %d" % (base_name, len(nodes)))
-                    new_node.addDecorator(BuildPlateDecorator(CuraApplication.getInstance().getMultiBuildPlateModel().activeBuildPlate))
-                    new_node.addDecorator(SliceableObjectDecorator())
+        
+        Logger.log("i","POINTS")
+        Logger.log("i",str(asc_mesh))
 
-                    nodes.append(new_node)
+        #Top vertex
+        ncols = int(self.header['NCOLS'])
+        nrows = int(self.header['NROWS'])
+        Logger.log("i","NROWS'%s'"%nrows)
+        asc_mesh_triangles = []
+        for j in range(1,nrows):   
+            id_behind = (j -1) * ncols
+            for i in range(1,ncols):
+                my_id = id_behind + i
+                asc_mesh_triangles.append([my_id , my_id + 1 , my_id + 1 + ncols])
+                asc_mesh_triangles.append([my_id , my_id + 1 + ncols ,my_id + ncols])
+        
+        
+        offset = ncols * nrows
+        offset_last_row = offset - ncols
+        offset_bottom  = offset + ncols + nrows
+        for i in range(1,ncols):
+            #top wall
+            asc_mesh_triangles.append([i, i + offset,i + 1])
+            asc_mesh_triangles.append([i +1 , i + offset, i + offset + 1])
+
+            #bottom wall    
+            asc_mesh_triangles.append([i + offset_last_row + 1 , i + offset_bottom, i + offset_last_row])
+            asc_mesh_triangles.append([i + offset_last_row + 1 , i + offset_bottom, i + offset_last_row + 1])
+             
+
+        start_right = offset + ncols
+        start_left = offset + ncols * 2 + nrows
+        for j in range(1,nrows):
+            #right wall
+            asc_mesh_triangles.append([ncols * ( j + 1 ), ncols * j, start_right + j ])
+            asc_mesh_triangles.append([ncols * ( j + 1 ), ncols + j, start_right + j + 1 ])
+
+            #left wall
+            asc_mesh_triangles.append([start_left + j, ncols * ( j - 1 ), ncols * j + 1])
+            asc_mesh_triangles.append([start_left + j + 1, start_left + j , ncols * j + 1])
+
+        
+        # Bottom triangles
+        p1 = ncols * nrows + 1
+        p2 = p1 + nrows - 1
+        p4 = p2 + ncols - 1  
+        p3 = p4 + nrows - 1
+
+        asc_mesh_triangles.append([p3,p2,p1])
+        asc_mesh_triangles.append([p3,p4,p2])
+
+        Logger.log("i","VERTEX")
+        Logger.log("i",str(asc_mesh_triangles))
+        
+        mesh = trimesh.base.Trimesh(vertices = numpy.array(asc_mesh, dtype = numpy.float32), faces = numpy.array(asc_mesh_triangles, dtype = numpy.int32))
+        mesh.merge_vertices()
+        mesh.remove_unreferenced_vertices()
+        mesh.fix_normals()
+        mesh_data = self._toMeshData(mesh, file_name)
+
+        nodes=[]
+        new_node = CuraSceneNode()
+        new_node.setSelectable(True)
+        new_node.setMeshData(mesh_data)
+        new_node.setName(base_name if len(nodes) == 0 else "%s %d" % (base_name, len(nodes)))
+        new_node.addDecorator(BuildPlateDecorator(CuraApplication.getInstance().getMultiBuildPlateModel().activeBuildPlate))
+        new_node.addDecorator(SliceableObjectDecorator())
+
+        
+        nodes.append(new_node)
 
         if not nodes:
             Logger.log("e", "No meshes in file %s" % base_name)
