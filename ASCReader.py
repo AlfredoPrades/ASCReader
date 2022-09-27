@@ -1,8 +1,24 @@
-# Copyright (c) 2019 fieldOfView, Ultimaker B.V.
 # Cura is released under the terms of the LGPLv3 or higher.
 
-# This AMF ASC parser is based on the AMF ASC parser in legacy cura:
-# https://github.com/daid/LegacyCura/blob/ad7641e059048c7dcb25da1f47c0a7e95e7f4f7c/Cura/util/meshLoaders/asc.py
+# This plugin will allow you to open terrain elevation maps (DEM files) in the ASCII ESRI format (.asc) and
+# create a model that the 3d printer cand print
+# Because the maps are only a plane the plugin also creates 4 walls and a bottom plane to create
+# a closed volume.
+
+
+# Performace is a little slow when loading big models.
+# 10MB elevation map will result in around 2GB of memory and 90s of processing time.
+
+
+# For more information in the ESRII ASCII format visit:
+# https://desktop.arcgis.com/es/arcmap/10.3/manage-data/raster-and-images/esri-ascii-raster-format.htm
+# 
+
+# This ASC parser is based on the AMF parser in legacy cura:
+# https://github.com/daid/LegacyCura/blob/ad7641e059048c7dcb25da1f47c0a7e95e7f4f7c/Cura/util/meshLoaders/amf.py
+
+
+
 
 from UM.MimeTypeDatabase import MimeTypeDatabase, MimeType
 from cura.CuraApplication import CuraApplication
@@ -20,6 +36,15 @@ from UM.Scene.GroupDecorator import GroupDecorator
 import numpy
 import trimesh
 import os.path
+
+
+# To reduce process time yo can disable normal processing, but the model will be hard to see in CURA
+calculate_normals = True
+
+
+# This value stablishes the elevation of the base of the model. By default is sea level.
+base_z = 0.0
+
 
 MYPY = False
 try:
@@ -120,7 +145,7 @@ class ASCReader(MeshReader):
         raw_file.close()
 
         elevation_range = (max_elevation - min_elevation)  / 5.0 
-        base_z = 0.0
+        
         if min_elevation > elevation_range:
             base_z = min_elevation - elevation_range
         
@@ -164,8 +189,6 @@ class ASCReader(MeshReader):
         Logger.log("i","POINTS")
         #Logger.log("i",str(asc_mesh))
 
-        
-
         asc_mesh_triangles = []
         offset = ncols * nrows 
         offset_last_row = offset - ncols
@@ -182,7 +205,7 @@ class ASCReader(MeshReader):
         
 
 
-        Logger.log("d","triangles top end")
+        #Logger.log("d","triangles top end")
         for i in range(0,ncols-1):
             #Logger.log("d","top bottom i vertex %s"%(i))
             #top wall
@@ -193,7 +216,7 @@ class ASCReader(MeshReader):
             asc_mesh_triangles.append([i + offset_last_row + 1 , i + offset_bottom, i + offset_last_row])
             asc_mesh_triangles.append([i + offset_bottom + 1 , i + offset_bottom, i + offset_last_row + 1])
 
-        Logger.log("i","VERTEX walls half")    
+        #Logger.log("i","VERTEX walls half")    
         start_right = offset + ncols 
         start_left = offset + ncols * 2 + nrows
         for j in range(0,nrows-1):
@@ -216,8 +239,9 @@ class ASCReader(MeshReader):
         asc_mesh_triangles.append([p3,p4,p2])
         Logger.log("i","VERTEX end")
         #Logger.log("i",str(asc_mesh_triangles))
-        
-        mesh = trimesh.base.Trimesh(vertices = numpy.array(asc_mesh, dtype = numpy.float32), faces = numpy.array(asc_mesh_triangles, dtype = numpy.int32))
+       
+		#TODO: PROBAR a no definit type a vore si ahorrem memoria 
+        mesh = trimesh.base.Trimesh(vertices = numpy.array(asc_mesh, dtype = numpy.float16), faces = numpy.array(asc_mesh_triangles, dtype = numpy.int32))
         Logger.log("i","Mesh built")
         mesh.merge_vertices()
         Logger.log("i","merge_vertices")
@@ -283,7 +307,9 @@ class ASCReader(MeshReader):
         vertices = numpy.asarray(vertices_list, dtype = numpy.float32)
         indices = numpy.asarray(indices_list, dtype = numpy.int32)
         Logger.log("i","calculate Normals")
-        normals = calculateNormalsFromIndexedVertices(vertices, indices, face_count)
+        normals = None
+        if calculate_normals:
+            normals = calculateNormalsFromIndexedVertices(vertices, indices, face_count)
         Logger.log("i","calculate Normals end")
 
         mesh_data = MeshData(vertices = vertices, indices = indices, normals = normals,file_name = file_name)
